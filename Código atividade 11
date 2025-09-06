@@ -1,0 +1,98 @@
+using UnityEngine;
+
+public class BossAI : MonoBehaviour
+{
+    public enum BossState
+    {
+        Idle,
+        Chase,
+        Attack,
+        SpecialAttack,
+        FleeRecover,
+        Dead
+    }
+
+    public BossState state = BossState.Idle;
+
+    [Header("References")]
+    public Transform player;
+    public Transform recoverPoint;
+
+    [Header("Stats")]
+    public float health = 100f;
+    public float moveSpeed = 4f;
+    public float chaseRange = 15f;
+    public float meleeRange = 3f;
+    public float rangedRange = 10f;
+    public float regenPerSec = 10f;
+    public float specialCooldown = 4f;
+
+    private float nextSpecial = 0f;
+
+    void Update()
+    {
+        if (state == BossState.Dead) return;
+
+        float dist = Vector3.Distance(transform.position, player.position);
+
+        // Test: press H to damage boss
+        if (Input.GetKeyDown(KeyCode.H)) health -= 10f;
+        if (health <= 0) { ChangeState(BossState.Dead); return; }
+
+        switch (state)
+        {
+            case BossState.Idle:
+                if (dist < chaseRange) ChangeState(BossState.Chase);
+                break;
+
+            case BossState.Chase:
+                MoveTo(player.position);
+                if (dist <= rangedRange) ChangeState(BossState.Attack);
+                if (health < 50 && Time.time >= nextSpecial)
+                    ChangeState(BossState.SpecialAttack);
+                break;
+
+            case BossState.Attack:
+                if (dist > rangedRange) ChangeState(BossState.Chase);
+                else if (health < 20) ChangeState(BossState.FleeRecover);
+                else if (health < 50 && Time.time >= nextSpecial)
+                    ChangeState(BossState.SpecialAttack);
+                else
+                    Debug.Log(dist <= meleeRange ? "MELEE ATTACK" : "RANGED ATTACK");
+                break;
+
+            case BossState.SpecialAttack:
+                Debug.Log("SPECIAL AOE ATTACK");
+                nextSpecial = Time.time + specialCooldown;
+                ChangeState(dist <= rangedRange ? BossState.Attack : BossState.Chase);
+                break;
+
+            case BossState.FleeRecover:
+                MoveTo(recoverPoint.position);
+                if (dist < 5) ChangeState(BossState.Chase); // interrupted
+                health = Mathf.Min(100f, health + regenPerSec * Time.deltaTime);
+                if (health >= 50) ChangeState(dist < chaseRange ? BossState.Chase : BossState.Idle);
+                break;
+        }
+    }
+
+    void MoveTo(Vector3 target)
+    {
+        transform.position = Vector3.MoveTowards(transform.position, target, moveSpeed * Time.deltaTime);
+    }
+
+    void ChangeState(BossState newState)
+    {
+        if (state == newState) return;
+        state = newState;
+        name = "Boss (" + newState + ")"; // shows current state in Inspector
+        Debug.Log("STATE → " + newState);
+    }
+
+    void OnDrawGizmosSelected()
+    {
+        Gizmos.color = Color.yellow; Gizmos.DrawWireSphere(transform.position, chaseRange);
+        Gizmos.color = Color.cyan;   Gizmos.DrawWireSphere(transform.position, rangedRange);
+        Gizmos.color = Color.red;    Gizmos.DrawWireSphere(transform.position, meleeRange);
+    }
+}
