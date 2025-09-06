@@ -1,0 +1,271 @@
+using UnityEngine;
+using UnityEngine.AI;
+
+public enum EstadoGuardiao
+{
+    Patrulha,
+    Alerta,
+    Perseguir,
+    Atacar,
+    ChamarReforcos,
+    Recuar,
+    Morto
+}
+
+public class GuardiaoFortalezaAI : MonoBehaviour
+{
+    [Header("Estado")]
+    public EstadoGuardiao estadoAtual = EstadoGuardiao.Patrulha;
+
+    [Header("Estatísticas")]
+    public float vidaMaxima = 100f;
+    public float vidaAtual;
+
+    [Header("Detecção")]
+    public float raioAlerta = 20f;
+    public float raioPerseguir = 10f;
+    public float raioCorpoACorpo = 3f;
+
+    [Header("Movimento")]
+    public Transform[] pontosPatrulha;
+    private int indicePatrulhaAtual = 0;
+    private NavMeshAgent agente;
+
+    [Header("Combate")]
+    public GameObject projeteisPrefab;
+    public Transform pontoLancar;
+    public float tempoEntreAtaques = 1.5f; // Tempo entre ataques
+    private float ultimoAtaque;
+
+    [Header("Alvo")]
+    public Transform alvo; // Dummy inimigo
+
+    [Header("Recuo")]
+    public Transform pontoRecuo;
+    public float taxaCura = 10f; // Vida por segundo
+
+    [Header("Reforços")]
+    public GameObject reforcoPrefab; // Cubo ou aliado
+    public int quantidadeReforcos = 3;     
+    public float raioSpawn = 3f;         
+    public float cooldownReforcos = 10f; // 10 segundos
+    private float ultimoReforco = -10f;
+
+    void Start()
+    {
+        agente = GetComponent<NavMeshAgent>();
+        vidaAtual = vidaMaxima;
+        ultimoAtaque = -tempoEntreAtaques;
+        ultimoReforco = -cooldownReforcos;
+        Debug.Log("Guardião spawnado. Estado atual: Patrulha");
+    }
+
+    void Update()
+    {
+        FSM();
+    }
+
+    void FSM()
+    {
+        // Estado morto
+        if (vidaAtual <= 0 && estadoAtual != EstadoGuardiao.Morto)
+        {
+            estadoAtual = EstadoGuardiao.Morto;
+            Debug.Log("Guardião morreu.");
+            return;
+        }
+
+        // Recuar se vida crítica
+        if (vidaAtual < 20 && estadoAtual != EstadoGuardiao.Morto && estadoAtual != EstadoGuardiao.Recuar)
+        {
+            estadoAtual = EstadoGuardiao.Recuar;
+            Debug.Log("Vida crítica! Recuando para curar.");
+            return;
+        }
+
+        // Chamar reforços se vida < 40% e cooldown pronto
+        if (vidaAtual < 40 && estadoAtual != EstadoGuardiao.ChamarReforcos && estadoAtual != EstadoGuardiao.Morto)
+        {
+            if (Time.time - ultimoReforco >= cooldownReforcos)
+            {
+                estadoAtual = EstadoGuardiao.ChamarReforcos;
+                ultimoReforco = Time.time;
+                Debug.Log("Vida abaixo de 40%. Chamando reforços!");
+                return;
+            }
+        }
+
+        // Ações dos estados
+        switch (estadoAtual)
+        {
+            case EstadoGuardiao.Patrulha:
+                Patrulha();
+                break;
+            case EstadoGuardiao.Alerta:
+                Alerta();
+                break;
+            case EstadoGuardiao.Perseguir:
+                Perseguir();
+                break;
+            case EstadoGuardiao.Atacar:
+                Atacar();
+                break;
+            case EstadoGuardiao.ChamarReforcos:
+                ChamarReforcos();
+                break;
+            case EstadoGuardiao.Recuar:
+                Recuar();
+                break;
+            case EstadoGuardiao.Morto:
+                Morto();
+                break;
+        }
+    }
+
+    // ------------------- ESTADOS -------------------
+
+    void Patrulha()
+    {
+        if (pontosPatrulha.Length == 0) return;
+
+        agente.destination = pontosPatrulha[indicePatrulhaAtual].position;
+
+        if (!agente.pathPending && agente.remainingDistance < 0.5f)
+            indicePatrulhaAtual = (indicePatrulhaAtual + 1) % pontosPatrulha.Length;
+
+        if (Vector3.Distance(transform.position, alvo.position) < raioAlerta)
+        {
+            estadoAtual = EstadoGuardiao.Alerta;
+            Debug.Log("Inimigo detectado! Mudando para Alerta.");
+        }
+    }
+
+    void Alerta()
+    {
+        transform.LookAt(alvo.position);
+        float distancia = Vector3.Distance(transform.position, alvo.position);
+
+        if (distancia < raioPerseguir)
+        {
+            estadoAtual = EstadoGuardiao.Perseguir;
+            Debug.Log("Inimigo próximo! Mudando para Perseguir.");
+        }
+        else if (distancia > raioAlerta)
+        {
+            estadoAtual = EstadoGuardiao.Patrulha;
+            Debug.Log("Inimigo perdido. Retornando à Patrulha.");
+        }
+    }
+
+    void Perseguir()
+    {
+        if (vidaAtual < 20)
+        {
+            estadoAtual = EstadoGuardiao.Recuar;
+            Debug.Log("Vida crítica durante Perseguir! Mudando para Recuar.");
+            return;
+        }
+
+        agente.destination = alvo.position;
+        float distancia = Vector3.Distance(transform.position, alvo.position);
+
+        if (distancia <= raioCorpoACorpo || (distancia > raioCorpoACorpo && distancia <= raioPerseguir))
+        {
+            estadoAtual = EstadoGuardiao.Atacar;
+            Debug.Log("No alcance do ataque! Mudando para Atacar.");
+        }
+        else if (distancia > raioAlerta)
+        {
+            estadoAtual = EstadoGuardiao.Patrulha;
+            Debug.Log("Inimigo fora do alcance. Retornando à Patrulha.");
+        }
+    }
+
+    void Atacar()
+    {
+        if (vidaAtual < 20)
+        {
+            estadoAtual = EstadoGuardiao.Recuar;
+            Debug.Log("Vida crítica durante ataque! Mudando para Recuar.");
+            return;
+        }
+
+        float distancia = Vector3.Distance(transform.position, alvo.position);
+
+        if (Time.time - ultimoAtaque >= tempoEntreAtaques)
+        {
+            ultimoAtaque = Time.time;
+
+            if (distancia <= raioCorpoACorpo)
+            {
+                Debug.Log("Ataque corpo a corpo!");
+            }
+            else if (distancia <= raioPerseguir)
+            {
+                Debug.Log("Ataque à distância!");
+                if (projeteisPrefab && pontoLancar)
+                    Instantiate(projeteisPrefab, pontoLancar.position, Quaternion.LookRotation(alvo.position - pontoLancar.position));
+            }
+        }
+
+        if (distancia > raioPerseguir)
+        {
+            estadoAtual = EstadoGuardiao.Perseguir;
+            Debug.Log("Inimigo saiu do alcance de ataque. Retornando a Perseguir.");
+        }
+    }
+
+    void ChamarReforcos()
+    {
+        if (reforcoPrefab == null) return;
+
+        Debug.Log("Chamando reforços!");
+        for (int i = 0; i < quantidadeReforcos; i++)
+        {
+            Vector3 spawnPos = transform.position + new Vector3(
+                Random.Range(-raioSpawn, raioSpawn),
+                0,
+                Random.Range(-raioSpawn, raioSpawn)
+            );
+
+            Instantiate(reforcoPrefab, spawnPos, Quaternion.identity);
+        }
+
+        estadoAtual = EstadoGuardiao.Perseguir;
+        Debug.Log("Reforços chamados. Retornando a Perseguir.");
+    }
+
+    void Recuar()
+    {
+        if (pontoRecuo == null) return;
+
+        // Mover para ponto de recuo
+        agente.destination = pontoRecuo.position;
+
+        // Curar continuamente enquanto recua
+        vidaAtual += taxaCura * Time.deltaTime;
+        vidaAtual = Mathf.Clamp(vidaAtual, 0, vidaMaxima);
+        Debug.Log($"Curando... Vida Atual: {vidaAtual}");
+
+        // Retornar à patrulha quando curado acima de 40%
+        if (vidaAtual >= 40f)
+        {
+            estadoAtual = EstadoGuardiao.Patrulha;
+            Debug.Log("Vida recuperada. Retornando à Patrulha.");
+        }
+    }
+
+    void Morto()
+    {
+        Debug.Log("Guardião morto!");
+        agente.isStopped = true;
+    }
+
+    // ------------------- DANO -------------------
+    public void ReceberDano(float quantidade)
+    {
+        vidaAtual -= quantidade;
+        vidaAtual = Mathf.Clamp(vidaAtual, 0, vidaMaxima);
+        Debug.Log($"Guardião recebe {quantidade} de dano. Vida Atual: {vidaAtual}");
+    }
+}
